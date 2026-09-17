@@ -66,16 +66,60 @@ kubectl create secret docker-registry ghcr-pull-secret \
 
 1. Push this whole directory to `github.com/jvcastaneda/ts-telemetry-demo`
    (update `repoURL` in `argocd/application.yaml` if it differs).
-2. Apply it: `kubectl apply -f argocd/application.yaml`.
-3. ArgoCD syncs `k8s/base` (a Kustomize base) automatically: creates the
+2. **This repo is private** (unlike the public `memory-hog` repo this project
+   was modeled on), so ArgoCD needs its own git credentials — a cluster-wide
+   ArgoCD instance with no stored repo credentials otherwise gets
+   `authentication required: Repository not found`. Create one repository
+   credential secret per private repo:
+   ```
+   kubectl create secret generic repo-ts-telemetry-demo \
+     --namespace argocd \
+     --from-literal=type=git \
+     --from-literal=url=https://github.com/jvcastaneda/ts-telemetry-demo.git \
+     --from-literal=username=<gh-username> \
+     --from-literal=password=<PAT with repo scope>
+   kubectl label secret repo-ts-telemetry-demo -n argocd \
+     argocd.argoproj.io/secret-type=repository
+   ```
+3. Apply the Application: `kubectl apply -f argocd/application.yaml`.
+4. ArgoCD syncs `k8s/base` (a Kustomize base) automatically: creates the
    `ts-telemetry-demo` namespace, `Deployment`, `Service`, `ServiceMonitor`,
-   and `PrometheusRule`, and self-heals/prunes on drift from git.
+   `PrometheusRule`, and the Grafana dashboard `ConfigMap`, and
+   self-heals/prunes on drift from git.
 
 If ArgoCD's `repo-server` isn't healthy in your cluster (check `kubectl get
 pods -n argocd`), you can apply the same manifests directly at any time:
 `kubectl apply -k k8s/base`. Once `repo-server` recovers and you've pushed to
 git, ArgoCD's `selfHeal` will reconcile against the same state with no
 conflict.
+
+## A note on cluster capacity
+
+Deploying this ran into the cluster being at its **pod-count limit**, not a
+CPU/memory limit: two `t3.small` nodes each cap out at 11 pods (an
+ENI/IP-per-instance-type limit set by `nodeadm` at boot, independent of the
+VPC CNI's prefix-delegation setting), and always-on infra (ArgoCD,
+kube-prometheus-stack, CNI/CSI daemons, coredns, kube-proxy) already filled
+both. Symptom: `FailedScheduling ... Too many pods` in `kubectl describe pod`.
+Fixed by scaling one managed node group from 1 to 2 desired nodes (plain
+ASG scale-out, no disruption to already-running pods):
+
+```
+aws eks update-nodegroup-config \
+  --cluster-name codebee-lab-4d1yUc8d \
+  --nodegroup-name node-group-2-20260826130618915800000018 \
+  --scaling-config minSize=1,maxSize=2,desiredSize=2 \
+  --region us-west-1
+```
+
+Raising max-pods-per-node on the *existing* two nodes instead would require
+editing the managed node group's launch template to set an explicit kubelet
+`maxPods` and rolling the node group onto it — and since both node groups
+here are `min=1/max=1`, that rollover has no surge capacity, so it terminates
+a node before its replacement is ready (a brief real outage for whatever was
+running there). Adding a node was the non-disruptive path; revisit prefix
+delegation + a proper rollover only if you also bump a node group's max size
+to allow a surge node first.
 
 ## Prometheus (kube-prometheus-stack)
 
@@ -99,8 +143,21 @@ kubectl get prometheus -A -o jsonpath='{.items[0].spec.serviceMonitorSelector}'
 
 ## Grafana dashboard
 
-Import `grafana/dashboard.json` (Dashboards → New → Import → Upload JSON),
-pick your Prometheus datasource when prompted. Panels:
+`k8s/base/grafana-dashboard-configmap.yaml` wraps `grafana/dashboard.json` in
+a ConfigMap labeled `grafana_dashboard: "1"`. kube-prometheus-stack's Grafana
+runs a sidecar (`grafana-sc-dashboard`) that watches all namespaces for that
+label and loads matching ConfigMaps automatically — the dashboard just shows
+up under the "General" folder within a minute of `kubectl apply -k`, no
+manual import, no admin credentials needed. The panels hardcode the
+Prometheus datasource `uid: prometheus`, matching kube-prometheus-stack's
+default datasource — check yours with:
+
+```
+kubectl get configmap -n monitoring kube-prometheus-stack-grafana-datasource -o jsonpath='{.data.datasource\.yaml}'
+```
+
+If you'd rather import it by hand elsewhere, `grafana/dashboard.json` is the
+same content on its own (Dashboards → New → Import → Upload JSON). Panels:
 
 1. **Request rate by status code** — `rate(http_requests_total[1m])` by
    `status_code`, stacked. The "Rate" in RED.
