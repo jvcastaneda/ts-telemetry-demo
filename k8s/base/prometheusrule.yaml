@@ -1,0 +1,45 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ts-telemetry-demo
+  namespace: ts-telemetry-demo
+  labels:
+    app: ts-telemetry-demo
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: ts-telemetry-demo.rules
+      rules:
+        - alert: TsTelemetryDemoHighErrorRate
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", status_code=~"5.."}[5m]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo"}[5m]))
+              > 0.2
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ts-telemetry-demo error rate above 20%"
+            description: "{{ $value | humanizePercentage }} of requests over the last 5m returned 5xx. The classic 'errors' leg of the RED method: a ratio of two rate() counters."
+
+        - alert: TsTelemetryDemoHighLatencyP95
+          expr: |
+            histogram_quantile(0.95,
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo"}[5m])) by (le)
+            ) > 0.3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ts-telemetry-demo p95 latency above 300ms"
+            description: "p95 request duration is {{ $value | humanizeDuration }}. Demonstrates histogram_quantile() over a Histogram's _bucket series, the standard way to alert on tail latency."
+
+        - alert: TsTelemetryDemoScrapeTargetDown
+          expr: |
+            up{namespace="ts-telemetry-demo", job="ts-telemetry-demo"} == 0
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prometheus can't scrape ts-telemetry-demo"
+            description: "The /metrics target has been down for 1m. The universal 'is Prometheus even able to see this thing' meta-alert every service should have."

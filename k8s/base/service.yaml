@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ts-telemetry-demo
+  namespace: ts-telemetry-demo
+  labels:
+    app: ts-telemetry-demo
+spec:
+  selector:
+    app: ts-telemetry-demo
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

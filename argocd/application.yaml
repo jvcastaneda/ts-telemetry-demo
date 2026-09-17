@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ts-telemetry-demo
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jvcastaneda/ts-telemetry-demo.git
+    targetRevision: main
+    path: k8s/base
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ts-telemetry-demo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

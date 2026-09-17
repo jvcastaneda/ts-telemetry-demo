@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ts-telemetry-demo
+  namespace: ts-telemetry-demo
+  labels:
+    app: ts-telemetry-demo
+    # kube-prometheus-stack's Prometheus only picks up ServiceMonitors matching
+    # its serviceMonitorSelector (often "release: <helm-release-name>").
+    # Check with: kubectl get prometheus -A -o jsonpath='{.items[0].spec.serviceMonitorSelector}'
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: ts-telemetry-demo
+  namespaceSelector:
+    matchNames:
+      - ts-telemetry-demo
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 5s

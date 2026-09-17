@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ts-telemetry-demo
+  namespace: ts-telemetry-demo
+  labels:
+    app: ts-telemetry-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ts-telemetry-demo
+  template:
+    metadata:
+      labels:
+        app: ts-telemetry-demo
+    spec:
+      containers:
+        - name: ts-telemetry-demo
+          image: ghcr.io/jvcastaneda/ts-telemetry-demo:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: SELF_TRAFFIC
+              value: "true"
+            - name: ERROR_RATE
+              value: "0.1"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "20m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      # The GHCR package for this image is private, so the cluster needs
+      # credentials to pull it. Create the secret with:
+      #   kubectl create secret docker-registry ghcr-pull-secret \
+      #     --docker-server=ghcr.io \
+      #     --docker-username=<gh-username> \
+      #     --docker-password=<PAT with read:packages> \
+      #     -n ts-telemetry-demo
+      imagePullSecrets:
+        - name: ghcr-pull-secret
