@@ -8,3 +8,4 @@ resources:
   - prometheusrule.yaml
   - prometheusrule-slo.yaml
   - grafana-dashboard-configmap.yaml
+  - grafana-slo-dashboard-configmap.yaml
