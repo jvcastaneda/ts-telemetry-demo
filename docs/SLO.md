@@ -66,7 +66,7 @@ Edit to fit your team; the point is that the budget drives a decision.
 
 ## Caveats
 
-- **Retention:** the 30d rules need Prometheus retention >= 30d. `monitoring` repo `kube-prometheus-stack/base/values.yaml` sets `retention: 35d`. Prometheus has no PVC (emptyDir), so history is lost whenever its pod restarts, and the 30d budget restarts with it until persistent storage is added.
+- **Retention:** the 30d rules need Prometheus retention >= 30d. `monitoring` repo `kube-prometheus-stack/base/values.yaml` sets `retention: 35d`. Prometheus stores its TSDB on a 20Gi `gp2` PVC (same values file), so history survives pod restarts.
 - **Restarts and new deploys:** counters reset, but `rate()` handles that.
   There's no traffic-floor guard, so a very low-traffic window yields noisy
   ratios; irrelevant here because self-traffic gives ~2 req/s.
