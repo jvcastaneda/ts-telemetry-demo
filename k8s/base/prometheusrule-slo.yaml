@@ -1,0 +1,179 @@
+# SLI recording rules, error-budget rules, and multi-window multi-burn-rate
+# alerts. Definitions and rationale live in docs/SLO.md; keep the two in sync.
+#
+# Targets (30d window):
+#   availability: 99.9% of /work requests return non-5xx  -> error budget 0.001
+#   latency:      95%   of /work requests finish in <=250ms -> error budget 0.05
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ts-telemetry-demo-slo
+  namespace: ts-telemetry-demo
+  labels:
+    app: ts-telemetry-demo
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # ---- SLIs: "bad event" ratios over several windows ----------------------
+    # Only route="/work" counts: /healthz is always 200 and would flatter the
+    # ratio, and /metrics is already excluded by the app middleware.
+    - name: ts-telemetry-demo.sli
+      interval: 30s
+      rules:
+        - record: slo:availability_error_ratio:rate5m
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[5m]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[5m]))
+        - record: slo:availability_error_ratio:rate30m
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[30m]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[30m]))
+        - record: slo:availability_error_ratio:rate1h
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[1h]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[1h]))
+        - record: slo:availability_error_ratio:rate6h
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[6h]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[6h]))
+        - record: slo:availability_error_ratio:rate3d
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[3d]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[3d]))
+        - record: slo:availability_error_ratio:rate30d
+          expr: |
+            sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work", status_code=~"5.."}[30d]))
+              / sum(rate(http_requests_total{namespace="ts-telemetry-demo", route="/work"}[30d]))
+
+        # Latency SLI: a request is "bad" if it took longer than 250ms, i.e.
+        # 1 - (requests in the le="0.25" bucket / all requests). 0.25 is an
+        # existing histogram bucket boundary, so no interpolation error.
+        - record: slo:latency_error_ratio:rate5m
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[5m]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[5m]))
+            )
+        - record: slo:latency_error_ratio:rate30m
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[30m]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[30m]))
+            )
+        - record: slo:latency_error_ratio:rate1h
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[1h]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[1h]))
+            )
+        - record: slo:latency_error_ratio:rate6h
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[6h]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[6h]))
+            )
+        - record: slo:latency_error_ratio:rate3d
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[3d]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[3d]))
+            )
+        - record: slo:latency_error_ratio:rate30d
+          expr: |
+            1 - (
+              sum(rate(http_request_duration_seconds_bucket{namespace="ts-telemetry-demo", route="/work", le="0.25"}[30d]))
+                / sum(rate(http_request_duration_seconds_count{namespace="ts-telemetry-demo", route="/work"}[30d]))
+            )
+
+    # ---- Error budget --------------------------------------------------------
+    # remaining = 1 - (observed error ratio / allowed error ratio).
+    # 1 = untouched, 0 = exhausted, negative = SLO violated over the window.
+    - name: ts-telemetry-demo.error-budget
+      interval: 1m
+      rules:
+        - record: slo:availability_error_budget_remaining:ratio
+          expr: 1 - (slo:availability_error_ratio:rate30d / 0.001)
+        - record: slo:latency_error_budget_remaining:ratio
+          expr: 1 - (slo:latency_error_ratio:rate30d / 0.05)
+
+    # ---- Burn-rate alerts (Google SRE Workbook, ch. 5) -----------------------
+    # burn rate = observed error ratio / allowed error ratio. Each alert needs a
+    # long window (is it sustained?) AND a short window (is it still happening?)
+    # so alerts clear quickly once the problem stops.
+    #   14.4x over 1h  -> 2% of the 30d budget gone in an hour   (page)
+    #   6x    over 6h  -> 5% of the budget gone in six hours      (page)
+    #   1x    over 3d  -> on pace to exhaust the budget exactly   (ticket)
+    # Thresholds below are burn * allowed ratio (0.001 availability, 0.05 latency).
+    - name: ts-telemetry-demo.slo-alerts
+      rules:
+        - alert: TsTelemetryDemoAvailabilityBurnFast
+          expr: |
+            slo:availability_error_ratio:rate1h > (14.4 * 0.001)
+            and
+            slo:availability_error_ratio:rate5m > (14.4 * 0.001)
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "Availability SLO burning at >14.4x (2% of 30d budget per hour)"
+            description: "{{ $value | humanizePercentage }} of /work requests failed over the last 5m. At this rate the 30d error budget is gone in ~2 days."
+
+        - alert: TsTelemetryDemoAvailabilityBurnSlow
+          expr: |
+            slo:availability_error_ratio:rate6h > (6 * 0.001)
+            and
+            slo:availability_error_ratio:rate30m > (6 * 0.001)
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "Availability SLO burning at >6x (5% of 30d budget per 6h)"
+            description: "{{ $value | humanizePercentage }} of /work requests failed over the last 30m."
+
+        - alert: TsTelemetryDemoAvailabilityBudgetTrend
+          expr: |
+            slo:availability_error_ratio:rate3d > (1 * 0.001)
+            and
+            slo:availability_error_ratio:rate6h > (1 * 0.001)
+          labels:
+            severity: warning
+            slo: availability
+          annotations:
+            summary: "Availability SLO on pace to exhaust its 30d budget"
+            description: "Error ratio has exceeded the 0.1% allowance over 3d and 6h. Slow leak: file a ticket rather than paging."
+
+        - alert: TsTelemetryDemoLatencyBurnFast
+          expr: |
+            slo:latency_error_ratio:rate1h > (14.4 * 0.05)
+            and
+            slo:latency_error_ratio:rate5m > (14.4 * 0.05)
+          labels:
+            severity: critical
+            slo: latency
+          annotations:
+            summary: "Latency SLO burning at >14.4x (2% of 30d budget per hour)"
+            description: "{{ $value | humanizePercentage }} of /work requests took longer than 250ms over the last 5m."
+
+        - alert: TsTelemetryDemoLatencyBurnSlow
+          expr: |
+            slo:latency_error_ratio:rate6h > (6 * 0.05)
+            and
+            slo:latency_error_ratio:rate30m > (6 * 0.05)
+          labels:
+            severity: critical
+            slo: latency
+          annotations:
+            summary: "Latency SLO burning at >6x (5% of 30d budget per 6h)"
+            description: "{{ $value | humanizePercentage }} of /work requests took longer than 250ms over the last 30m."
+
+        - alert: TsTelemetryDemoLatencyBudgetTrend
+          expr: |
+            slo:latency_error_ratio:rate3d > (1 * 0.05)
+            and
+            slo:latency_error_ratio:rate6h > (1 * 0.05)
+          labels:
+            severity: warning
+            slo: latency
+          annotations:
+            summary: "Latency SLO on pace to exhaust its 30d budget"
+            description: "More than 5% of /work requests exceeded 250ms over 3d and 6h. Slow leak: file a ticket rather than paging."
