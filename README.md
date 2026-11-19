@@ -49,43 +49,19 @@ generator required.
 and on version tags (`v1.2.3`), using the built-in `GITHUB_TOKEN` — no extra
 CI secrets needed.
 
-**This project uses a private GHCR package**, so the cluster needs an
-`imagePullSecret` to pull the image (`k8s/base/deployment.yaml` already
-references `ghcr-pull-secret`). Create it once per cluster with a GitHub PAT
-that has `read:packages`:
-
-```
-kubectl create secret docker-registry ghcr-pull-secret \
-  --docker-server=ghcr.io \
-  --docker-username=<gh-username> \
-  --docker-password=<PAT with read:packages> \
-  -n ts-telemetry-demo
-```
+The GHCR package is **public**, so the cluster pulls the image without an
+`imagePullSecret`.
 
 ## Deploy with ArgoCD
 
-1. Push this whole directory to `github.com/jvcastaneda/ts-telemetry-demo`
-   (update `repoURL` in `argocd/application.yaml` if it differs).
-2. **This repo is private** (unlike the public `memory-hog` repo this project
-   was modeled on), so ArgoCD needs its own git credentials — a cluster-wide
-   ArgoCD instance with no stored repo credentials otherwise gets
-   `authentication required: Repository not found`. Create one repository
-   credential secret per private repo:
-   ```
-   kubectl create secret generic repo-ts-telemetry-demo \
-     --namespace argocd \
-     --from-literal=type=git \
-     --from-literal=url=https://github.com/jvcastaneda/ts-telemetry-demo.git \
-     --from-literal=username=<gh-username> \
-     --from-literal=password=<PAT with repo scope>
-   kubectl label secret repo-ts-telemetry-demo -n argocd \
-     argocd.argoproj.io/secret-type=repository
-   ```
-3. Apply the Application: `kubectl apply -f argocd/application.yaml`.
-4. ArgoCD syncs `k8s/base` (a Kustomize base) automatically: creates the
-   `ts-telemetry-demo` namespace, `Deployment`, `Service`, `ServiceMonitor`,
-   `PrometheusRule`, and the Grafana dashboard `ConfigMap`, and
-   self-heals/prunes on drift from git.
+In the EKS lab (`github.com/jvcastaneda/eks-lab`) this is fully automated:
+every `Lab → up` creates a `ts-telemetry-demo-root` Application that syncs
+`argocd/`. Argo CD then applies `argocd/application.yaml`, which syncs
+`k8s/base`: the namespace, `Deployment`, `Service`, `ServiceMonitor`,
+`PrometheusRule`s and both Grafana dashboard `ConfigMap`s, with self-heal and
+prune. The repo and image are public, so no credentials are involved.
+
+On another cluster: `kubectl apply -f argocd/application.yaml`.
 
 If ArgoCD's `repo-server` isn't healthy in your cluster (check `kubectl get
 pods -n argocd`), you can apply the same manifests directly at any time:

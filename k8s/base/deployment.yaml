@@ -48,12 +48,3 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
-      # The GHCR package for this image is private, so the cluster needs
-      # credentials to pull it. Create the secret with:
-      #   kubectl create secret docker-registry ghcr-pull-secret \
-      #     --docker-server=ghcr.io \
-      #     --docker-username=<gh-username> \
-      #     --docker-password=<PAT with read:packages> \
-      #     -n ts-telemetry-demo
-      imagePullSecrets:
-        - name: ghcr-pull-secret
